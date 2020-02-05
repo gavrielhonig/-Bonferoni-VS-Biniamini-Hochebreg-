@@ -1,0 +1,318 @@
+---
+title: "Bonferoni VS Biniamini-Hochebreg"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r}
+library("expm")
+library("MASS")
+```
+load the data
+```{r}
+load("C:/Users/??????/Downloads/meth_dat.rda")
+```
+
+t-stat: comparing the means and dividing by SD
+```{r}
+tstat1 <- function(y,colonind,lungind){
+t1 <- (colMeans(y[colonind,])-colMeans(y[lungind,]))/(sqrt(diag(var(y[colonind,]))/length(colonind)+diag(var(y[lungind,]))/length(lungind)))
+}
+
+```
+convert to Pi
+```{r}
+t1 <- tstat1(meth_dat,colonind,lungind)
+p1 <- 1-pt(abs(t1),34)
+sum(p1*2<0.05)
+```
+
+wathing the distribution of p
+```{r}
+hist(p1)
+plot(p1)
+abline(0.05,0,col="blue")
+#H0 might not be true since we have ununiform density
+```
+
+Bonferoni
+```{r}
+# each hypothesis under alpha/B
+bonf <- function(num,p){
+B1 <- rep(0,num)
+for (i in 1:num) {
+  if(p[i]<0.025/num){
+    B1[i]=1
+  }
+}
+return(B1)
+}
+B1 <- bonf(1000,p1)
+print(sum(B1))
+```
+
+Biniamini-Hochebreg
+```{r}
+#wd dont need to look on every observation
+BH=function(p,q=0.05, ret_ind = TRUE){
+  a=sort(p)
+  n=length(a)
+  i=n
+  while (a[i]>((i/n)*q) && i>=1){
+    i=i-1
+  }
+  if(ret_ind){
+    return(i)
+  } else{
+    if(i>0){
+      return(a[i])
+    }
+    else{
+      return(0)
+    }
+  }
+}
+B_H <- BH(p1,0.025)
+print(B_H)
+```
+
+which hypohesis have been rejected
+```{r}
+BHD <- p1<=sort(p1)[730]
+```
+variences
+```{r}
+#using regularization
+cov1 <- var(meth_dat[colonind,])*0.8+0.2/1000*sum(diag(var(meth_dat[colonind,])))*diag(1000)
+cov2 <- var(meth_dat[lungind,])*0.8+0.2/1000*sum(diag(var(meth_dat[lungind,])))*diag(1000)
+cov1_h <- sqrtm(cov1) #improving processing speed
+cov2_h <- sqrtm(cov2)
+```
+Bootstrap-parametric
+```{r}
+#H0- we have two distinctive distributions
+boot_par <- function(data,vec1,vec2,B,var1,var2){
+p_min <- rep(0,B)
+  for (i in 1:B) {
+  a <- mvrnorm (n=length(vec1),mu=rep(0,1000),Sigma =diag(1000))
+  b <- mvrnorm (n=length(vec2),mu=rep(0,1000),Sigma =diag(1000))
+  c <- rbind(a%*%var1,b%*%var2)
+    t <- tstat1(c,vec1,vec2)
+    p<- (1-pt(abs(t),34))*2
+p_min[i] <- min(p)
+}
+p_crit <- (sort(p_min))[0.05*B]
+d <- rep(0,1000)
+ for (j in 1:1000) {
+  if(p1[j]<p_crit){
+   d[j] <- 1
+  }
+ }
+return(d)
+}
+b_par_crit <- function(data,vec1,vec2,B,var1,var2){
+p_min <- rep(0,B)
+  for (i in 1:B) {
+  a <- mvrnorm (n=length(vec1),mu=rep(0,1000),Sigma =diag(1000))
+  b <- mvrnorm (n=length(vec2),mu=rep(0,1000),Sigma =diag(1000))
+  c <- rbind(a%*%var1,b%*%var2)
+    t <- tstat1(c,vec1,vec2)
+    p<- (1-pt(abs(t),34))*2
+p_min[i] <- min(p)
+}
+p_crit <- (sort(p_min))[0.05*B]
+return(p_crit)
+}
+```
+Calculate results
+```{r}
+pb_rejc <- boot_par(meth_dat,colonind,lungind,1000,cov1_h,cov2_h)
+print(sum(pb_rejc))
+```
+
+p-crit of bootstrap-parametric
+```{r}
+bp_crit <- b_par_crit(meth_dat,colonind,lungind,1000,cov1_h,cov2_h)
+```
+
+
+function that generate non parametric data-subtracting means and taking samples from rows.
+```{r}
+gen_non_par = function(n,mu, orig_dat){
+  nn=dim(orig_dat)[1]
+  pp=dim(orig_dat)[2]
+  norm_orig_dat=orig_dat-matrix(rep(mu,each = nn),nrow = nn,ncol=pp)  
+  inds = sample(nn,n, replace = TRUE)
+  return(as.matrix(norm_orig_dat[inds,]))
+}
+```
+bootstrap non prametric
+```{r}
+#H0- we have two distinctive distributions
+b_n_par <- function(data,vec1,vec2,B){
+   p_min <- rep(0,B)
+  for (i in 1:B){
+  a <- gen_non_par(length(vec1),colMeans(data[vec1,]),data[vec1,])
+  b <- gen_non_par(length(vec2),colMeans(data[vec2,]),data[vec2,])
+  c <- rbind(a,b)
+  t <- tstat1(c,vec1,vec2)
+    p<- (1-pt(abs(t),34))*2
+p_min[i] <- min(p)
+}
+p_crit <- (sort(p_min))[0.05*B]
+e <- rep(0,1000)
+ for (j in 1:1000) {
+  if(p1[j]<p_crit){
+   e[j] <- 1
+  }
+ }
+return(e)
+} 
+#t-crit
+b_n_par_crit <- function(data,vec1,vec2,B){
+     p_min <- rep(0,B)
+  for (i in 1:B){
+  a <- gen_non_par(length(vec1),colMeans(data[vec1,]),data[vec1,])
+  b <- gen_non_par(length(vec2),colMeans(data[vec2,]),data[vec2,])
+  c <- rbind(a,b)
+  t <- tstat1(c,vec1,vec2)
+    p<- (1-pt(abs(t),34))*2
+p_min[i] <- min(p)
+}
+p_critbnp <- (sort(p_min))[0.05*B]
+return(p_critbnp)
+}
+
+```
+calculate
+```{r}
+nonpar_rej <- b_n_par(meth_dat,colonind,lungind,1000)
+sum(nonpar_rej)
+#only 71 rejections, really small comparing to bootstrapprametric.Indicate that we have large variance  and problem in Ho of uniform distribution.
+```
+
+t_crit
+```{r}
+bnp_crit <- b_n_par_crit(meth_dat,colonind,lungind,1000)
+
+```
+
+CI function
+```{r}
+CI <- function(hat,data){
+  a <- hat-sqrt(hat*(1-hat)/ncol(data))*1.96
+  b <- hat+sqrt(hat*(1-hat)/ncol(data))*1.96
+  print(a);print(b)
+}
+
+```
+Bonferoni on new data
+```{r}
+bnf <- rep(0,1000)
+for (i in 1:1000){
+  new_data <- rbind(gen_non_par(length(colonind),colMeans(meth_dat[colonind,]),meth_dat[colonind,]),gen_non_par(length(lungind),colMeans(meth_dat[lungind,]),meth_dat[lungind,]))
+  bnf[i]  <- sum(bonf(1000,1-pt(abs(tstat1(new_data,colonind,lungind)),34)))
+} 
+print(sum(bnf>0)/1000)  #FWER-0.846-huge (we'll check againt 0.05)
+```
+Bonferoni- CI on new data
+```{r}
+CI(sum(bnf>0)/1000,meth_dat)
+```
+BH on new data-FWER
+```{r}
+BHN <- rep(0,2000)
+for (i in 1:2000){
+   new_data <- rbind(gen_non_par(length(colonind),colMeans(meth_dat[colonind,]),meth_dat[colonind,]),gen_non_par(length(lungind),colMeans(meth_dat[lungind,]),meth_dat[lungind,]))
+  BHN[i] <- BH(1-pt(abs(tstat1(new_data,colonind,lungind)),34),0.025)
+}
+print(sum(BHN>0)/2000) #FWER is huge
+```
+BH- CI on new data
+```{r}
+CI(sum(BHN>0)/2000,meth_dat)
+```
+bootstrap prametric on new data-FWER 
+```{r}
+bp_fwer <-rep(0,1000) 
+for (i in 1:1000){
+ rej1 <- rep(0,1000)
+  new_data <- rbind(gen_non_par(length(colonind),colMeans(meth_dat[colonind,]),meth_dat[colonind,]),gen_non_par(length(lungind),colMeans(meth_dat[lungind,]),meth_dat[lungind,]))
+   t2 <- tstat1(new_data,colonind,lungind)
+    p2<- (1-pt(abs(t2),34))*2
+    for (j in 1:1000) {
+    
+  if(p2[j]<bp_crit){
+    rej1[j] <- 1
+  }
+    }
+    bp_fwer[i] <- sum(rej1)
+}
+sum(bp_fwer>0)/1000 # FWER is huge
+```
+
+bootstrap prametric on new data- CI
+```{r}
+CI(sum(bp_fwer>0)/1000,meth_dat)
+```
+
+bootstrap non prametric on new data-FWER & CI
+```{r}
+#FWER-rejections/hypothesis, var=p*1-p/B because it's bionom distirbution
+bnp_fwer <-rep(0,1000) 
+for (i in 1:1000){
+ rej <- rep(0,1000)
+  new_data <- rbind(gen_non_par(length(colonind),colMeans(meth_dat[colonind,]),meth_dat[colonind,]),gen_non_par(length(lungind),colMeans(meth_dat[lungind,]),meth_dat[lungind,]))
+   t3 <- tstat1(new_data,colonind,lungind)
+    p3<- (1-pt(abs(t3),34))*2
+    for (j in 1:1000) {
+    
+  if(p3[j]<bnp_crit){
+    rej[j] <- 1
+  }
+    }
+    bnp_fwer[i] <- sum(rej)
+}
+mean(bnp_fwer>0) # FWER 
+```
+
+```{r}
+CI(mean(bnp_fwer>0),meth_dat)
+
+```
+```{r}
+#CI for min 5 pi
+(which(p1==0))[1:5]
+var74 <- var(meth_dat[1:17,74])/17+var(meth_dat[18:36,74])/19
+var103 <- var(meth_dat[1:17,103])/17+var(meth_dat[18:36,103])/19
+var145 <- var(meth_dat[1:17,145])/17+var(meth_dat[18:36,145])/19
+var147 <- var(meth_dat[1:17,147])/17+var(meth_dat[18:36,147])/19
+var149 <- var(meth_dat[1:17,149])/17+var(meth_dat[18:36,149])/19
+m74 <- mean(meth_dat[1:17,74])-mean(meth_dat[18:36,74])
+m103 <- mean(meth_dat[1:17,103])-mean(meth_dat[18:36,103])
+m145 <- mean(meth_dat[1:17,145])-mean(meth_dat[18:36,145])
+m147 <- mean(meth_dat[1:17,147])-mean(meth_dat[18:36,147])
+m149 <- mean(meth_dat[1:17,149])-mean(meth_dat[18:36,149])
+var_c <- (c(var74,var103,var145,var147,var149))
+mu <- c(m74,m103,m145,m147,m149)
+ci_l5 <-rep(0,5)
+  for (i in 1:5) {
+  ci_l5[i] <- mu[i]-sqrt(var_c[i])*qnorm(1-0.025*5/1000)
+  
+  }
+ci_h5 <-rep(0,5)
+  for (i in 1:5) {
+  ci_h5[i] <- mu[i]+sqrt(var_c[i])*qnorm(1-0.025*5/1000)
+  
+  }
+ci5 <- cbind(ci_l5,ci_h5)
+print(ci5)
+```
+table of rejections
+```{r}
+table_rej <- matrix(c(487,730,522,71),1,4)
+colnames(table_rej) <- c("bonferoni","BH","bootsrap_par","bootsrap_non_per")
+print(table_rej)
+#we can see huge diffrences, meaning we have big covarience
+```
